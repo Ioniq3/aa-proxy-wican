@@ -2,7 +2,7 @@ use anyhow::{anyhow, Context, Result};
 use bluer::gatt::remote::Characteristic;
 use bluer::{
     agent::{Agent, AgentHandle},
-    AdapterEvent, Address, Device, Session, Uuid,
+    Adapter, AdapterEvent, Address, Device, Session, Uuid,
 };
 use clap::{Parser, ValueEnum};
 use futures_util::stream::StreamExt;
@@ -144,14 +144,9 @@ async fn main() -> Result<()> {
             TerminalMode::Mixed,
             ColorChoice::Auto,
         ),
-        WriteLogger::new(
-            log_level,
-            log_config.clone(),
-            log_file,
-        ),
+        WriteLogger::new(log_level, log_config.clone(), log_file),
     ]) {
-        Ok(_) => {
-        }
+        Ok(_) => {}
         Err(e) => {
             return Err(anyhow!("Could not initialize combined logger: {}", e));
         }
@@ -177,8 +172,12 @@ async fn main() -> Result<()> {
         first_run = false;
 
         let wican_timeout = Duration::from_secs(configuration.wican_timeout as u64);
+        let session = Session::new().await?;
+        let adapter = session.default_adapter().await?;
 
         let device = match connect_to_device(
+            session,
+            adapter,
             configuration.wican_mac_address,
             configuration.wican_passkey,
             wican_timeout,
@@ -193,15 +192,19 @@ async fn main() -> Result<()> {
             }
         };
 
-        if let Some(battery_data) =
-            match fetch_data(&device, configuration.vehicle_battery_capacity, wican_timeout).await {
-                Ok(data) => data,
-                Err(e) => {
-                    error!("Failed to fetch data from device: {}. Will retry...", e);
-                    continue;
-                }
-            }
+        if let Some(battery_data) = match fetch_data(
+            &device,
+            configuration.vehicle_battery_capacity,
+            wican_timeout,
+        )
+        .await
         {
+            Ok(data) => data,
+            Err(e) => {
+                error!("Failed to fetch data from device: {}. Will retry...", e);
+                continue;
+            }
+        } {
             if let Err(e) = post_battery_data(&configuration.api_url, &battery_data).await {
                 error!("Failed to post battery data: {}. Will retry...", e);
             }
@@ -210,16 +213,25 @@ async fn main() -> Result<()> {
 }
 
 // Finds the target Bluetooth device by its MAC address during a discovery scan.
-async fn find_device(wican_mac_address: Address, wican_timeout: Duration) -> Result<Device> {
-    let session = Session::new().await?;
-    let adapter = session.default_adapter().await?;
-
-    if adapter.device(wican_mac_address)?.is_services_resolved().await.is_ok() {
+async fn find_device(
+    adapter: &Adapter,
+    wican_mac_address: Address,
+    wican_timeout: Duration,
+) -> Result<Device> {
+    if adapter
+        .device(wican_mac_address)?
+        .is_services_resolved()
+        .await
+        .is_ok()
+    {
         info!("Device {} is known and available.", wican_mac_address);
         return Ok(adapter.device(wican_mac_address)?);
     }
 
-    info!("Starting device discovery to find {} for a maximum of {:?}", wican_mac_address, wican_timeout);
+    info!(
+        "Starting device discovery to find {} for a maximum of {:?}",
+        wican_mac_address, wican_timeout
+    );
     let mut device_events = adapter.discover_devices().await?;
 
     match tokio::time::timeout(wican_timeout, async {
@@ -231,34 +243,21 @@ async fn find_device(wican_mac_address: Address, wican_timeout: Duration) -> Res
                 }
             }
         }
-    }).await {
+    })
+    .await
+    {
         Ok(result) => result,
         Err(_) => Err(anyhow!("Scan timed out without finding device.")),
     }
 }
 
 // Attempts to pair with the device if it is not already paired.
-async fn try_pair(device: &Device) -> Result<()> {
+async fn try_pair(session: &Session, device: &Device, wican_passkey: u32) -> Result<()> {
     if device.is_paired().await? {
         info!("Device is already paired. Skipping pairing.");
         return Ok(());
     }
 
-    info!("Attempting to pair with device...");
-    device.pair().await.context("Failed to pair with device")?;
-
-    info!("Pairing successful!");
-    Ok(())
-}
-
-// Connects to wican device
-async fn connect_to_device(
-    wican_mac_address: Address,
-    wican_passkey: u32,
-    wican_timeout: Duration,
-    max_retries: u8,
-) -> Result<Device> {
-    let session = Session::new().await?;
     let agent = Agent {
         request_default: true,
         request_passkey: Some(Box::new(move |_path| {
@@ -274,16 +273,30 @@ async fn connect_to_device(
     };
     let _agent_handle: AgentHandle = session.register_agent(agent).await?;
 
-    let device = find_device(wican_mac_address, wican_timeout).await?;
+    info!("Attempting to pair with device...");
+    device.pair().await.context("Failed to pair with device")?;
 
-    try_pair(&device).await?;
+    info!("Pairing successful!");
+    Ok(())
+}
+
+// Connects to wican device
+async fn connect_to_device(
+    session: Session,
+    adapter: Adapter,
+    wican_mac_address: Address,
+    wican_passkey: u32,
+    wican_timeout: Duration,
+    max_retries: u8,
+) -> Result<Device> {
+    let device = find_device(&adapter, wican_mac_address, wican_timeout).await?;
+
+    try_pair(&session, &device, wican_passkey).await?;
 
     if device.is_connected().await? {
         info!("Device is already connected. Skipping connection.");
         return Ok(device);
     }
-
-    let mut connected = false;
 
     for i in 0..max_retries {
         info!(
@@ -294,25 +307,25 @@ async fn connect_to_device(
         match device.connect().await {
             Ok(_) => {
                 info!("Connected successfully!");
-                connected = true;
                 break;
             }
             Err(e) => {
-                if i < max_retries {
-                    warn!("Connection failed: {}. Retrying in 10 seconds...", e);
+                if i + 1 < max_retries {
+                    warn!("Connection failed: {}.  Retrying in 10 seconds...", e);
                     time::sleep(Duration::from_secs(10)).await;
                 } else {
-                    warn!("Connection failed the maximum number of times: {}.", e);
+                    warn!("Connection failed the maximum number of times: {}.  Will remove pairing and retry...", e);
+                    adapter
+                        .remove_device(device.address())
+                        .await
+                        .context("Failed to remove pairing")?;
+                    return Err(anyhow!(
+                        "Failed to connect to the device after {} attempts.",
+                        max_retries
+                    ));
                 }
             }
         }
-    }
-
-    if !connected {
-        return Err(anyhow!(
-            "Failed to connect to the device after {} attempts.",
-            max_retries
-        ));
     }
 
     Ok(device)
@@ -345,7 +358,11 @@ async fn find_characteristics(device: &Device) -> Result<(Characteristic, Charac
 }
 
 // Submit autopid request and parse as JSON
-async fn fetch_data(device: &Device, vehicle_battery_capacity: u32, wican_timeout: Duration) -> Result<Option<BatteryData>> {
+async fn fetch_data(
+    device: &Device,
+    vehicle_battery_capacity: u32,
+    wican_timeout: Duration,
+) -> Result<Option<BatteryData>> {
     let (notify_char, write_char) = find_characteristics(device)
         .await
         .context("Failed to find WiCAN characteristics")?;
