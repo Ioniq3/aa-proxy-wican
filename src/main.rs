@@ -396,38 +396,25 @@ async fn post_battery_data(url: &str, data: &BatteryData) -> Result<()> {
 
     let client = Client::new();
 
-    let res = client.post(url).json(data).send().await;
+    let res = client.post(url).json(data).send().await?;
 
-    match res {
-        Ok(response) => {
-            if response.status().is_success() {
-                info!(
-                    "Successfully posted to aa-proxy-rs at: {}. Status: {}",
-                    url,
-                    response.status()
-                );
-                Ok(())
-            } else {
-                let status = response.status();
-                warn!(
-                    "Failed to post to aa-proxy-rs at: {}. Status: {}",
-                    url, status
-                );
-                Err(anyhow::anyhow!(
-                    "Failed to post to aa-proxy-rs at: {}. Status: {}",
-                    url,
-                    status
-                ))
-            }
-        }
-        Err(e) => {
-            if e.is_connect() {
-                error!("Error: Failed to connect to aa-proxy-rs at: {}", url);
-                Err(anyhow::anyhow!("Connection error to {}", url))
-            } else {
-                error!("An unexpected error occurred: {}", e);
-                Err(anyhow::anyhow!("Request error: {}", e))
-            }
-        }
+    if res.status().is_success() {
+        info!(
+            "Successfully posted to aa-proxy-rs at: {}. Status: {}",
+            url,
+            res.status()
+        );
+        Ok(())
+    } else {
+        let status = res.status();
+        warn!(
+            "Failed to post to aa-proxy-rs at: {}. Status: {}",
+            url, status
+        );
+        Err(anyhow!(
+            "Failed to post to aa-proxy-rs at: {}. Status: {}",
+            url,
+            status
+        ))
     }
 }
