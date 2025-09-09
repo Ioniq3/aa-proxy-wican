@@ -83,6 +83,10 @@ pub struct Configuration {
     #[arg(long, default_value_t = 5)]
     pub wican_max_connect_retries: u8,
 
+    /// WiCAN timeout
+    #[arg(long, default_value_t = 10)]
+    pub wican_timeout: u8,
+
     /// WiCAN update frequency in minutes
     #[arg(long, default_value_t = 1)]
     pub wican_update_frequency_minutes: u8,
@@ -172,9 +176,12 @@ async fn main() -> Result<()> {
         }
         first_run = false;
 
+        let wican_timeout = Duration::from_secs(configuration.wican_timeout as u64);
+
         let device = match connect_to_device(
             configuration.wican_mac_address,
             configuration.wican_passkey,
+            wican_timeout,
             configuration.wican_max_connect_retries,
         )
         .await
@@ -187,7 +194,7 @@ async fn main() -> Result<()> {
         };
 
         if let Some(battery_data) =
-            match fetch_data(&device, configuration.vehicle_battery_capacity).await {
+            match fetch_data(&device, configuration.vehicle_battery_capacity, wican_timeout).await {
                 Ok(data) => data,
                 Err(e) => {
                     error!("Failed to fetch data from device: {}. Will retry...", e);
@@ -203,31 +210,30 @@ async fn main() -> Result<()> {
 }
 
 // Finds the target Bluetooth device by its MAC address during a discovery scan.
-async fn find_device(wican_mac_address: Address) -> Result<Device> {
+async fn find_device(wican_mac_address: Address, wican_timeout: Duration) -> Result<Device> {
     let session = Session::new().await?;
     let adapter = session.default_adapter().await?;
-    let device = adapter.device(wican_mac_address)?;
-    
-    if device.is_services_resolved().await.is_ok() {
-        info!("Device {} is is known and available.", wican_mac_address);
-        return Ok(device);
+
+    if adapter.device(wican_mac_address)?.is_services_resolved().await.is_ok() {
+        info!("Device {} is known and available.", wican_mac_address);
+        return Ok(adapter.device(wican_mac_address)?);
     }
 
-    info!("Starting device discovery to find {}", wican_mac_address);
+    info!("Starting device discovery to find {} for a maximum of {:?}", wican_mac_address, wican_timeout);
     let mut device_events = adapter.discover_devices().await?;
-    loop {
-        let next_event = device_events.next().await;
 
-        if next_event.is_none() {
-            return Err(anyhow!("Scan ended without finding device."));
-        }
-
-        if let Some(AdapterEvent::DeviceAdded(addr)) = next_event {
-            if addr == wican_mac_address {
-                info!("Found device with address: {}", addr);
-                break Ok(adapter.device(addr)?);
+    match tokio::time::timeout(wican_timeout, async {
+        loop {
+            if let Some(AdapterEvent::DeviceAdded(addr)) = device_events.next().await {
+                if addr == wican_mac_address {
+                    info!("Found device with address: {}", addr);
+                    break Ok(adapter.device(addr)?);
+                }
             }
         }
+    }).await {
+        Ok(result) => result,
+        Err(_) => Err(anyhow!("Scan timed out without finding device.")),
     }
 }
 
@@ -249,6 +255,7 @@ async fn try_pair(device: &Device) -> Result<()> {
 async fn connect_to_device(
     wican_mac_address: Address,
     wican_passkey: u32,
+    wican_timeout: Duration,
     max_retries: u8,
 ) -> Result<Device> {
     let session = Session::new().await?;
@@ -267,7 +274,7 @@ async fn connect_to_device(
     };
     let _agent_handle: AgentHandle = session.register_agent(agent).await?;
 
-    let device = find_device(wican_mac_address).await?;
+    let device = find_device(wican_mac_address, wican_timeout).await?;
 
     try_pair(&device).await?;
 
@@ -338,7 +345,7 @@ async fn find_characteristics(device: &Device) -> Result<(Characteristic, Charac
 }
 
 // Submit autopid request and parse as JSON
-async fn fetch_data(device: &Device, vehicle_battery_capacity: u32) -> Result<Option<BatteryData>> {
+async fn fetch_data(device: &Device, vehicle_battery_capacity: u32, wican_timeout: Duration) -> Result<Option<BatteryData>> {
     let (notify_char, write_char) = find_characteristics(device)
         .await
         .context("Failed to find WiCAN characteristics")?;
@@ -350,7 +357,7 @@ async fn fetch_data(device: &Device, vehicle_battery_capacity: u32) -> Result<Op
         "Successfully sent WiCAN autopid request. Waiting for a response for up to 10 seconds..."
     );
 
-    let timeout = time::sleep(Duration::from_secs(10));
+    let timeout = time::sleep(wican_timeout);
     tokio::select! {
         _ = timeout => {
             warn!("Timeout: No reply from WiCAN received.");
