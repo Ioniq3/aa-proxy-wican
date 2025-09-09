@@ -344,10 +344,7 @@ async fn fetch_data(device: &Device, vehicle_battery_capacity: u32) -> Result<Op
         .context("Failed to find WiCAN characteristics")?;
 
     let mut notif_stream = Box::pin(notify_char.notify().await?);
-    let command_data: [u8; 11] = [
-        0x61, 0x75, 0x74, 0x6f, 0x70, 0x69, 0x64, 0x20, 0x2d, 0x64, 0x0a,
-    ];
-    write_char.write(&command_data).await?;
+    write_char.write(b"autopid -d\n").await?;
 
     info!(
         "Successfully sent WiCAN autopid request. Waiting for a response for up to 10 seconds..."
@@ -362,7 +359,10 @@ async fn fetch_data(device: &Device, vehicle_battery_capacity: u32) -> Result<Op
         notification = notif_stream.next() => {
             if let Some(n) = notification {
                 let response_string = String::from_utf8(n)
-                    .context("Failed to decode WiCAN response as string")?;
+                    .context("Failed to decode WiCAN response as string")?
+                    .trim_end()
+                    .to_string();
+
                 debug!("Successfully decoded WiCAN response as string: {}", response_string);
 
                 let wican_response: WicanResponse = serde_json::from_str(&response_string)
