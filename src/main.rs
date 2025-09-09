@@ -43,8 +43,12 @@ impl From<LogLevel> for LevelFilter {
 
 #[derive(Debug, Deserialize)]
 struct WicanResponse {
-    #[serde(alias = "SOC_D")]
+    #[serde(alias = "SOC")]
     soc: f32,
+    #[serde(alias = "SOC_D")]
+    soc_d: Option<f32>,
+    #[serde(alias = "OUTDOOR_TEMPERATURE")]
+    outdoor_temperature: Option<f32>,
 }
 
 #[derive(Parser, Debug, Serialize, Deserialize, Default)]
@@ -334,7 +338,7 @@ async fn find_characteristics(device: &Device) -> Result<(Characteristic, Charac
 }
 
 // Submit autopid request and parse as JSON
-async fn fetch_data(device: &Device, parsed_battery_capacity: u32) -> Result<Option<BatteryData>> {
+async fn fetch_data(device: &Device, vehicle_battery_capacity: u32) -> Result<Option<BatteryData>> {
     let (notify_char, write_char) = find_characteristics(device)
         .await
         .context("Failed to find WiCAN characteristics")?;
@@ -367,8 +371,13 @@ async fn fetch_data(device: &Device, parsed_battery_capacity: u32) -> Result<Opt
                 debug!("Successfully decoded WiCAN response as JSON: {:?}", wican_response);
 
                 let battery_data = BatteryData {
-                    battery_level_percentage: Some(wican_response.soc),
-                    battery_capacity_wh: Some(parsed_battery_capacity),
+                    battery_level_percentage: Some(
+                        wican_response
+                            .soc_d
+                            .unwrap_or(wican_response.soc)
+                    ),
+                    external_temp_celsius: wican_response.outdoor_temperature,
+                    battery_capacity_wh: Some(vehicle_battery_capacity),
                     ..Default::default()
                 };
 
