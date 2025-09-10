@@ -11,13 +11,23 @@ aa-proxy-wican is a aa-proxy-rs client for the WiCAN Pro device found here: http
 # Setup instructions:
 
  - Identify the MAC Address of your WiCAN PRO
+ - Ensure your WiCAN Pro has bluetooth enabled and is in AutoPid mode
+ - Note your bluetooth passkey, the default is 123456 and you should likely change this
  - Open your aa-proxy-rs configuration, either via the web interface or by editing the config.toml
- - Add the MAC address of your phone to the 'connect' setting.  This will ensure aa-proxy-rs does not try to connect to the WiCAN Pro (note this is temporary and will be resolved with an aa-proxy-rs update)
- - Enable EV Mode
- - Configure your EV Connector types if not already done
- - Configure EV Logger, at a minimum the following is required: ```/usr/bin/aa-proxy-wican --wican-mac-address AA:BB:CC:DD:EE:FF --vehicle-battery-capacity 10000``` where 10000 is the capacity of your EV battery in watt hours.
+   - Add the MAC address of your Android phone to the 'connect' setting.  This will ensure aa-proxy-rs does not try to connect to the WiCAN Pro (note: this additional configuration is temporary and will be resolved with an aa-proxy-rs update)
+   - Enable EV Mode
+   - Configure your EV Connector types if not already done
+   - Configure EV Logger, at a minimum the following is required: ```/usr/bin/aa-proxy-wican --wican-mac-address AA:BB:CC:DD:EE:FF --vehicle-battery-capacity 10000``` where AA:BB:CC:DD:EE:FF is the MAC address of your WiCAN Pro and 10000 is the capacity of your EV battery in watt hours.
+ - You may wish to explore a more accurate 'ev model' for your vehicle to enable google maps to provide more accurate estimates.  Please seek support on the aa-proxy-rs Discord until this feature is better documented.
 
 Logs are by default written to /var/log/aa-proxy-wican.log
+
+# Supported AutoPid Values
+- SOC_D - State of charge Displayed
+- SOC - State of charge
+- OUTDOOR_TEMPERATURE - Current outdoor temperature in celcius
+
+aa-proxy-wican will use SOC_D if available, otherwise use SOC for the battery percentage.  In addition, if OUTDOOR_TEMPERATURE is available (this is not currently available in vehicle profiles by default) it will also be used.
 
 aa-proxy-wican supports additional arguments you may wish to modify.  It can also be run over ssh should you wish to test/debug.
 
