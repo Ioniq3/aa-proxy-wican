@@ -3,7 +3,7 @@
 aa-proxy-wican is a aa-proxy-rs client for the WiCAN Pro device found here: https://www.crowdsupply.com/meatpi-electronics/wican-pro  This device supports vehicle profiles and returns pre-parsed vehicle metrics such as SOC (State of Charge).  Setting up the WiCAN Pro and getting your vehicle profile working is beyond the scope of this document, please see the WiCAN documentation here: https://meatpihq.github.io/wican-fw/
 
 # Requirements:
-* WiCAN Pro (Original WiCAN is not currently supported
+* WiCAN Pro (Original WiCAN is not currently supported)
 * WiCAN Pro firmware 4.30b4 and above
 * A working WiCAN Pro vehicle profile with at least SOC (confirm on the Dashboard that your SOC is being parsed correctly, if not seek support from WiCAN)
 * aa-proxy-rs with working MITM mode
@@ -12,8 +12,8 @@ aa-proxy-wican is a aa-proxy-rs client for the WiCAN Pro device found here: http
 
  - Identify the MAC Address of your WiCAN PRO
  - Ensure your WiCAN Pro has bluetooth enabled and is in AutoPid mode
- - Note your bluetooth passkey, the default is 123456 and you should likely change this
- - Open your aa-proxy-rs configuration, either via the web interface or by editing the config.toml
+ - Note your bluetooth passkey, the default is 123456 and you should change this
+ - Open your aa-proxy-rs configuration, either via the web interface or by editing /etc/aa-proxy-rs/config.toml
    - Add the MAC address of your Android phone to the 'connect' setting.  This will ensure aa-proxy-rs does not try to connect to the WiCAN Pro (note: this additional configuration is temporary and will be resolved with an aa-proxy-rs update)
    - Enable EV Mode
    - Configure your EV Connector types if not already done
